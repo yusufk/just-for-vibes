@@ -308,65 +308,87 @@ async fn search(query: &str) -> Vec<SearchResult> {
 
 async fn browse(url: &str) -> (String, Vec<PageLine>) {
     let client = reqwest::Client::new();
-    let resp = client.get(url)
-        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-        .send().await;
-    let Ok(resp) = resp else { return (String::new(), vec![PageLine::Text("Failed to load.".into())]) };
-    let Ok(body) = resp.text().await else { return (String::new(), vec![PageLine::Text("Failed to read.".into())]) };
 
-    let title = extract_between(&body, "<title", "</title>")
-        .map(|t| t.split('>').last().unwrap_or(t)).unwrap_or("").to_string();
-
-    // Strip noisy tags
-    let mut clean = body;
-    for tag in &["script", "style", "nav", "footer", "noscript"] {
-        while let Some(start) = clean.find(&format!("<{}", tag)) {
-            if let Some(end) = clean[start..].find(&format!("</{}>", tag)) {
-                clean.replace_range(start..start + end + tag.len() + 3, "");
-            } else { break; }
+    // Try Cloudflare markdown-for-agents first (site must opt-in)
+    let body = if let Ok(resp) = client.get(url)
+        .header("Accept", "text/markdown")
+        .header("User-Agent", "j4v/0.1")
+        .send().await
+    {
+        if resp.headers().get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| ct.contains("markdown"))
+            .unwrap_or(false)
+        {
+            resp.text().await.ok()
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
+    // Fall back to Jina Reader
+    let body = match body {
+        Some(md) => md,
+        None => {
+            let jina_url = format!("https://r.jina.ai/{}", url);
+            match client.get(&jina_url)
+                .header("User-Agent", "j4v/0.1")
+                .send().await
+            {
+                Ok(resp) => resp.text().await.unwrap_or_else(|_| "Failed to read.".into()),
+                Err(_) => return (String::new(), vec![PageLine::Text("Failed to load.".into())]),
+            }
+        }
+    };
+
+    // Parse markdown response
+    let mut title = String::new();
     let mut lines: Vec<PageLine> = Vec::new();
 
-    // Paragraphs
-    let mut pos = 0;
-    while let Some(start) = clean[pos..].find("<p") {
-        let abs = pos + start;
-        if let Some(end) = clean[abs..].find("</p>") {
-            let inner = &clean[abs..abs + end];
-            let text = strip_tags(&inner.split('>').skip(1).collect::<Vec<_>>().join(">"));
-            let text = html_decode(text.trim());
-            if !text.is_empty() { lines.push(PageLine::Text(text)); }
-            pos = abs + end + 4;
-        } else { break; }
-    }
-
-    // Headings
-    for level in 1..=3u8 {
-        let open = format!("<h{}", level);
-        let close = format!("</h{}>", level);
-        let mut pos = 0;
-        while let Some(start) = clean[pos..].find(&open) {
-            let abs = pos + start;
-            if let Some(end) = clean[abs..].find(&close) {
-                let inner = &clean[abs..abs + end];
-                let text = strip_tags(&inner.split('>').skip(1).collect::<Vec<_>>().join(">"));
-                let text = html_decode(text.trim());
-                if !text.is_empty() { lines.push(PageLine::Heading(text)); }
-                pos = abs + end + close.len();
-            } else { break; }
+    for line in body.lines() {
+        if line.starts_with("Title: ") && title.is_empty() {
+            title = line[7..].to_string();
+        } else if line.starts_with("# ") {
+            lines.push(PageLine::Heading(line[2..].to_string()));
+        } else if line.starts_with("## ") {
+            lines.push(PageLine::Heading(line[3..].to_string()));
+        } else if line.starts_with("### ") {
+            lines.push(PageLine::Heading(line[4..].to_string()));
+        } else if line.starts_with("* ") || line.starts_with("- ") {
+            lines.push(PageLine::Text(format!("  • {}", &line[2..])));
+        } else if line.starts_with("[") && line.contains("](") {
+            // [text](url)
+            if let (Some(text_end), Some(url_start)) = (line.find("]("), line.rfind(')')) {
+                let text = &line[1..text_end];
+                let href = &line[text_end+2..url_start];
+                lines.push(PageLine::Link(text.to_string(), href.to_string()));
+            } else {
+                lines.push(PageLine::Text(line.to_string()));
+            }
+        } else if line.starts_with("*   [") || line.starts_with("-   [") {
+            // list item with link
+            let inner = &line[4..];
+            if let (Some(text_end), Some(url_start)) = (inner.find("]("), inner.rfind(')')) {
+                let text = &inner[1..text_end];
+                let href = &inner[text_end+2..url_start];
+                lines.push(PageLine::Link(format!("  • {}", text), href.to_string()));
+            } else {
+                lines.push(PageLine::Text(format!("  • {}", &line[4..])));
+            }
+        } else if line.starts_with("URL Source:") || line.starts_with("Published Time:") || line.starts_with("Warning:") || line.starts_with("Markdown Content:") {
+            // Skip Jina metadata
+        } else if !line.is_empty() {
+            lines.push(PageLine::Text(line.to_string()));
         }
     }
 
     if lines.is_empty() {
-        let text = strip_tags(&clean);
-        for line in text.lines().filter(|l| !l.trim().is_empty()).take(200) {
-            lines.push(PageLine::Text(line.trim().to_string()));
-        }
+        lines.push(PageLine::Text("No content extracted.".into()));
     }
 
-    (html_decode(&title), lines)
+    (title, lines)
 }
 
 fn extract_between<'a>(s: &'a str, start: &str, end: &str) -> Option<&'a str> {
