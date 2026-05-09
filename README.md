@@ -12,28 +12,32 @@ A TUI web browser. Any website, rendered as a pure terminal interface.
 ## Architecture
 
 ```
-┌──────────────────────────────┐
-│  j4v TUI Client (terminal)   │
-│  - Search homepage            │
-│  - Renders TUI pages          │
-│  - Handles navigation/forms   │
-└──────────────┬───────────────┘
-               │ HTTPS
-┌──────────────▼───────────────┐
-│  Cloudflare Worker (proxy)    │
-│  - /search?q=...  → results  │
-│  - /browse?url=... → convert  │
-│  - Fetches target page        │
-│  - HTML → TUI wire format     │
-└──────────────────────────────┘
+j4v (single Rust binary, 3.7MB)
+├── TUI mode (default): interactive terminal browser
+├── Agent mode (--json): structured output for AI agents
+└── Direct mode (--url): fetch + render a specific page
 ```
+
+No server, no proxy, no deployment. Just a fast local binary.
 
 ## Stack
 
-- **Client**: Rust + ratatui (instant startup, zero GC, single binary)
-- **Proxy**: Cloudflare Worker (JS/TS)
-- **Search**: DuckDuckGo (free, no API key) or Google via SerpAPI
-- **Wire format**: JSON (structured elements the client renders as widgets)
+- **Language**: Rust + ratatui (instant startup, zero GC, single binary)
+- **Search**: DuckDuckGo HTML lite (free, no API key)
+- **Rendering**: HTML → strip noise → structured text (headings, paragraphs, links)
+
+## Usage
+
+```bash
+# Interactive TUI browser
+j4v
+
+# Fetch a page directly
+j4v --url https://example.com
+
+# Agent mode: JSON output for AI consumption
+j4v --url https://example.com --json
+```
 
 ## Wire Format (draft)
 
@@ -55,10 +59,10 @@ A TUI web browser. Any website, rendered as a pure terminal interface.
 
 ## Milestones
 
-1. **Worker MVP**: `/search` endpoint returns DuckDuckGo results as JSON
-2. **Worker Browse**: `/browse?url=` fetches + converts HTML → wire format
-3. **TUI Client**: Renders homepage, search input, results list
-4. **TUI Browse**: Renders converted pages with links, text, headings
-5. **Navigation**: Click links, go back, address bar
+1. ~~**Search**: DDG search from homepage~~ ✅
+2. ~~**Browse**: Fetch + render page content~~ ✅
+3. **Agent mode**: `--url` and `--json` flags for non-interactive use
+4. **Better parsing**: Handle more HTML elements, word wrapping
+5. **Navigation**: Click links within pages, back/forward stack
 6. **Forms**: Submit search forms, login forms
-7. **Polish**: Loading states, error handling, bookmarks
+7. **Polish**: Loading states, error handling, bookmarks, history
