@@ -70,6 +70,63 @@ impl App {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    // Agent mode: j4v --url <url> [--json]
+    if args.iter().any(|a| a == "--url") {
+        let url = args.iter().position(|a| a == "--url")
+            .and_then(|i| args.get(i + 1))
+            .expect("Usage: j4v --url <url> [--json]");
+        let json_mode = args.iter().any(|a| a == "--json");
+        let (title, lines) = browse(url).await;
+
+        if json_mode {
+            let elements: Vec<serde_json::Value> = lines.iter().map(|l| match l {
+                PageLine::Heading(t) => serde_json::json!({"type": "heading", "text": t}),
+                PageLine::Text(t) => serde_json::json!({"type": "text", "content": t}),
+                PageLine::Link(text, href) => serde_json::json!({"type": "link", "text": text, "href": href}),
+            }).collect();
+            let out = serde_json::json!({"title": title, "url": url, "elements": elements});
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        } else {
+            if !title.is_empty() { println!("# {}\n", title); }
+            for line in &lines {
+                match line {
+                    PageLine::Heading(t) => println!("\n## {}", t),
+                    PageLine::Text(t) => println!("{}", t),
+                    PageLine::Link(text, href) => println!("  → {} [{}]", text, href),
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // Search mode: j4v --search <query> [--json]
+    if args.iter().any(|a| a == "--search") {
+        let query = args.iter().position(|a| a == "--search")
+            .and_then(|i| args.get(i + 1))
+            .expect("Usage: j4v --search <query> [--json]");
+        let json_mode = args.iter().any(|a| a == "--json");
+        let results = search(query).await;
+
+        if json_mode {
+            let items: Vec<serde_json::Value> = results.iter().map(|r| {
+                serde_json::json!({"title": r.title, "url": r.url, "snippet": r.snippet})
+            }).collect();
+            let out = serde_json::json!({"query": query, "results": items});
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        } else {
+            for (i, r) in results.iter().enumerate() {
+                println!("{}. {}", i + 1, r.title);
+                println!("   {}", r.url);
+                if !r.snippet.is_empty() { println!("   {}", r.snippet); }
+                println!();
+            }
+        }
+        return Ok(());
+    }
+
+    // Interactive TUI mode
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     io::stdout().execute(EnableMouseCapture)?;
