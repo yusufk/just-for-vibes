@@ -86,11 +86,14 @@ fn render_home(f: &mut Frame, app: &App, area: Rect) {
     ]).split(area);
 
     let logo = Paragraph::new(vec![
-        Line::from(Span::styled(" ╻ ┏┓ ╻ ╻", Style::default().fg(Color::Cyan).bold())),
-        Line::from(Span::styled(" ┃ ┃┃ ┃╻┃", Style::default().fg(Color::Cyan).bold())),
-        Line::from(Span::styled("╺┛ ┗┛ ┗┻┛", Style::default().fg(Color::Cyan).bold())),
+        Line::from(Span::styled("_____________ __       ", Style::default().fg(Color::Cyan).bold())),
+        Line::from(Span::styled("______(_)_  // /__   __", Style::default().fg(Color::Cyan).bold())),
+        Line::from(Span::styled("_____  /_  // /__ | / /", Style::default().fg(Color::LightCyan))),
+        Line::from(Span::styled("____  / /__  __/_ |/ / ", Style::default().fg(Color::LightCyan))),
+        Line::from(Span::styled("___  /    /_/  _____/  ", Style::default().fg(Color::White).bold())),
+        Line::from(Span::styled("/___/                  ", Style::default().fg(Color::White).bold())),
         Line::from(""),
-        Line::from(Span::styled("just for vibes", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("» just for vibes «", Style::default().fg(Color::DarkGray))),
     ]).alignment(Alignment::Center);
     f.render_widget(logo, chunks[1]);
 
