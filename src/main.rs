@@ -8,6 +8,12 @@ use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph, Clear},
 };
+use tokio::sync::mpsc;
+
+enum BgResult {
+    Search(Vec<SearchResult>),
+    Page(String, Vec<PageLine>),
+}
 
 #[derive(PartialEq)]
 enum Screen { Home, Results, Browse }
@@ -34,6 +40,8 @@ struct App {
     page_lines: Vec<PageLine>,
     page_scroll: u16,
     status: String,
+    loading: bool,
+    spinner: usize,
 }
 
 impl App {
@@ -43,7 +51,12 @@ impl App {
             results: Vec::new(), selected: 0, running: true,
             page_title: String::new(), page_url: String::new(),
             page_lines: Vec::new(), page_scroll: 0, status: String::new(),
+            loading: false, spinner: 0,
         }
+    }
+    fn spinner_char(&self) -> &str {
+        const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        FRAMES[self.spinner % FRAMES.len()]
     }
 }
 
@@ -53,13 +66,36 @@ async fn main() -> io::Result<()> {
     io::stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let mut app = App::new();
+    let (tx, mut rx) = mpsc::unbounded_channel::<BgResult>();
 
     while app.running {
         terminal.draw(|f| ui(f, &app))?;
-        if event::poll(std::time::Duration::from_millis(50))? {
+
+        // Check for background task results
+        while let Ok(result) = rx.try_recv() {
+            match result {
+                BgResult::Search(results) => {
+                    app.results = results;
+                    app.selected = 0;
+                    app.screen = Screen::Results;
+                    app.loading = false;
+                    app.status.clear();
+                }
+                BgResult::Page(title, lines) => {
+                    app.page_title = title;
+                    app.page_lines = lines;
+                    app.loading = false;
+                    app.status.clear();
+                }
+            }
+        }
+
+        if app.loading { app.spinner += 1; }
+
+        if event::poll(std::time::Duration::from_millis(80))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press { continue; }
-                handle_input(&mut app, key.code).await;
+                handle_input(&mut app, key.code, &tx);
             }
         }
     }
@@ -107,8 +143,13 @@ fn render_home(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(input, input_area);
     f.set_cursor_position((input_area.x + 1 + app.cursor as u16, input_area.y + 1));
 
+    let hint_text = if app.loading {
+        format!("{} Searching...", app.spinner_char())
+    } else {
+        "Enter to search · Esc to quit".to_string()
+    };
     let hint = Paragraph::new(Span::styled(
-        "Enter to search · Esc to quit", Style::default().fg(Color::DarkGray),
+        hint_text, Style::default().fg(if app.loading { Color::Yellow } else { Color::DarkGray }),
     )).alignment(Alignment::Center);
     f.render_widget(hint, chunks[3]);
 }
@@ -152,7 +193,12 @@ fn render_browse(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(url_bar, chunks[0]);
 
     let mut lines: Vec<Line> = Vec::new();
-    if !app.status.is_empty() {
+    if app.loading {
+        lines.push(Line::from(Span::styled(
+            format!("  {} Loading page...", app.spinner_char()),
+            Style::default().fg(Color::Yellow),
+        )));
+    } else if !app.status.is_empty() {
         lines.push(Line::from(Span::styled(app.status.as_str(), Style::default().fg(Color::Yellow))));
     } else {
         for pl in &app.page_lines {
@@ -171,14 +217,20 @@ fn render_browse(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(footer, chunks[2]);
 }
 
-async fn handle_input(app: &mut App, key: KeyCode) {
+fn handle_input(app: &mut App, key: KeyCode, tx: &mpsc::UnboundedSender<BgResult>) {
+    if app.loading { return; } // ignore input while loading
     match app.screen {
         Screen::Home => match key {
             KeyCode::Esc => app.running = false,
             KeyCode::Enter if !app.input.is_empty() => {
-                app.results = search(&app.input).await;
-                app.selected = 0;
-                app.screen = Screen::Results;
+                app.loading = true;
+                app.status = format!("{} Searching...", app.spinner_char());
+                let query = app.input.clone();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let results = search(&query).await;
+                    let _ = tx.send(BgResult::Search(results));
+                });
             }
             KeyCode::Char(c) => { app.input.insert(app.cursor, c); app.cursor += 1; }
             KeyCode::Backspace if app.cursor > 0 => { app.cursor -= 1; app.input.remove(app.cursor); }
@@ -195,14 +247,16 @@ async fn handle_input(app: &mut App, key: KeyCode) {
                 if let Some(r) = app.results.get(app.selected) {
                     let url = r.url.clone();
                     app.page_scroll = 0;
-                    app.status = "Loading...".into();
+                    app.loading = true;
+                    app.status = format!("{} Loading...", app.spinner_char());
                     app.screen = Screen::Browse;
                     app.page_lines.clear();
-                    let (title, lines) = browse(&url).await;
-                    app.page_title = title;
-                    app.page_url = url;
-                    app.page_lines = lines;
-                    app.status.clear();
+                    app.page_url = url.clone();
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let (title, lines) = browse(&url).await;
+                        let _ = tx.send(BgResult::Page(title, lines));
+                    });
                 }
             }
             _ => {}
