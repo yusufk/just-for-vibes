@@ -1,6 +1,6 @@
 use std::io;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, EnableMouseCapture, DisableMouseCapture},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -39,9 +39,11 @@ struct App {
     page_url: String,
     page_lines: Vec<PageLine>,
     page_scroll: u16,
+    page_link_idx: usize, // currently selected link index
     status: String,
     loading: bool,
     spinner: usize,
+    history: Vec<String>, // URL back-stack
 }
 
 impl App {
@@ -50,13 +52,19 @@ impl App {
             input: String::new(), cursor: 0, screen: Screen::Home,
             results: Vec::new(), selected: 0, running: true,
             page_title: String::new(), page_url: String::new(),
-            page_lines: Vec::new(), page_scroll: 0, status: String::new(),
-            loading: false, spinner: 0,
+            page_lines: Vec::new(), page_scroll: 0, page_link_idx: 0,
+            status: String::new(), loading: false, spinner: 0,
+            history: Vec::new(),
         }
     }
     fn spinner_char(&self) -> &str {
         const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         FRAMES[self.spinner % FRAMES.len()]
+    }
+    fn page_links(&self) -> Vec<(usize, &str)> {
+        self.page_lines.iter().enumerate().filter_map(|(i, l)| {
+            if let PageLine::Link(_, href) = l { Some((i, href.as_str())) } else { None }
+        }).collect()
     }
 }
 
@@ -64,6 +72,7 @@ impl App {
 async fn main() -> io::Result<()> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
+    io::stdout().execute(EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let mut app = App::new();
     let (tx, mut rx) = mpsc::unbounded_channel::<BgResult>();
@@ -93,14 +102,26 @@ async fn main() -> io::Result<()> {
         if app.loading { app.spinner += 1; }
 
         if event::poll(std::time::Duration::from_millis(80))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press { continue; }
-                handle_input(&mut app, key.code, &tx);
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    handle_input(&mut app, key.code, &tx);
+                }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        if app.screen == Screen::Browse { app.page_scroll = app.page_scroll.saturating_sub(3); }
+                    }
+                    MouseEventKind::ScrollDown => {
+                        if app.screen == Screen::Browse { app.page_scroll = app.page_scroll.saturating_add(3); }
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
 
     disable_raw_mode()?;
+    io::stdout().execute(DisableMouseCapture)?;
     io::stdout().execute(LeaveAlternateScreen)?;
     Ok(())
 }
@@ -201,18 +222,28 @@ fn render_browse(f: &mut Frame, app: &App, area: Rect) {
     } else if !app.status.is_empty() {
         lines.push(Line::from(Span::styled(app.status.as_str(), Style::default().fg(Color::Yellow))));
     } else {
-        for pl in &app.page_lines {
+        let links = app.page_links();
+        let selected_line = links.get(app.page_link_idx).map(|&(i, _)| i);
+        for (i, pl) in app.page_lines.iter().enumerate() {
             match pl {
                 PageLine::Heading(t) => lines.push(Line::from(Span::styled(t.as_str(), Style::default().fg(Color::Cyan).bold()))),
                 PageLine::Text(t) => lines.push(Line::from(t.as_str())),
-                PageLine::Link(text, _) => lines.push(Line::from(Span::styled(format!("→ {}", text), Style::default().fg(Color::Blue).underlined()))),
+                PageLine::Link(text, _) => {
+                    let is_selected = selected_line == Some(i);
+                    let style = if is_selected {
+                        Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Rgb(0, 255, 255)).bold()
+                    } else {
+                        Style::default().fg(Color::Rgb(0, 255, 255)).underlined()
+                    };
+                    lines.push(Line::from(Span::styled(format!(" ▸ {}", text), style)));
+                }
             }
         }
     }
     f.render_widget(Paragraph::new(lines).scroll((app.page_scroll, 0)), chunks[1]);
 
     let footer = Paragraph::new(Span::styled(
-        " ↑↓/jk scroll · Esc back · q quit", Style::default().fg(Color::DarkGray),
+        " ↑↓ scroll · Tab/S-Tab links · Enter follow · Bksp back · h home · q quit", Style::default().fg(Color::DarkGray),
     ));
     f.render_widget(footer, chunks[2]);
 }
@@ -262,12 +293,73 @@ fn handle_input(app: &mut App, key: KeyCode, tx: &mpsc::UnboundedSender<BgResult
             _ => {}
         },
         Screen::Browse => match key {
-            KeyCode::Esc => app.screen = Screen::Results,
+            KeyCode::Esc | KeyCode::Backspace => {
+                if let Some(prev_url) = app.history.pop() {
+                    // Go back
+                    app.page_scroll = 0;
+                    app.loading = true;
+                    app.page_lines.clear();
+                    app.page_url = prev_url.clone();
+                    app.page_link_idx = 0;
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let (title, lines) = browse(&prev_url).await;
+                        let _ = tx.send(BgResult::Page(title, lines));
+                    });
+                } else {
+                    app.screen = Screen::Results;
+                }
+            }
+            KeyCode::Char('h') => { app.screen = Screen::Home; app.history.clear(); }
             KeyCode::Char('q') => app.running = false,
             KeyCode::Up | KeyCode::Char('k') => app.page_scroll = app.page_scroll.saturating_sub(3),
             KeyCode::Down | KeyCode::Char('j') => app.page_scroll = app.page_scroll.saturating_add(3),
             KeyCode::PageUp => app.page_scroll = app.page_scroll.saturating_sub(20),
             KeyCode::PageDown => app.page_scroll = app.page_scroll.saturating_add(20),
+            KeyCode::Tab => {
+                let count = app.page_links().len();
+                if count > 0 {
+                    app.page_link_idx = (app.page_link_idx + 1) % count;
+                    let links = app.page_links();
+                    let line_idx = links[app.page_link_idx].0 as u16;
+                    if line_idx < app.page_scroll || line_idx > app.page_scroll + 20 {
+                        app.page_scroll = line_idx.saturating_sub(5);
+                    }
+                }
+            }
+            KeyCode::BackTab => {
+                let count = app.page_links().len();
+                if count > 0 {
+                    app.page_link_idx = if app.page_link_idx == 0 { count - 1 } else { app.page_link_idx - 1 };
+                    let links = app.page_links();
+                    let line_idx = links[app.page_link_idx].0 as u16;
+                    if line_idx < app.page_scroll || line_idx > app.page_scroll + 20 {
+                        app.page_scroll = line_idx.saturating_sub(5);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let href = app.page_links().get(app.page_link_idx).map(|&(_, h)| h.to_string());
+                if let Some(mut url) = href {
+                    if url.starts_with('/') {
+                        let base: String = app.page_url.split('/').take(3).collect::<Vec<_>>().join("/");
+                        url = format!("{}{}", base, url);
+                    }
+                    if url.starts_with("http") {
+                        app.history.push(app.page_url.clone());
+                        app.page_scroll = 0;
+                        app.page_link_idx = 0;
+                        app.loading = true;
+                        app.page_lines.clear();
+                        app.page_url = url.clone();
+                        let tx = tx.clone();
+                        tokio::spawn(async move {
+                            let (title, lines) = browse(&url).await;
+                            let _ = tx.send(BgResult::Page(title, lines));
+                        });
+                    }
+                }
+            }
             _ => {}
         },
     }
