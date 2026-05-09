@@ -2,6 +2,8 @@
 
 A TUI web browser. Any website, rendered as a pure terminal interface.
 
+![j4v screenshot](screenshot.png)
+
 ## Concept
 
 - Homepage: Google-style search page (input + Search + I'm Feeling Lucky)
