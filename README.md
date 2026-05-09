@@ -30,7 +30,7 @@ A TUI web browser. Any website, rendered as a pure terminal interface.
 
 ## Stack
 
-- **Client**: Python + Textual (TUI framework)
+- **Client**: Rust + ratatui (instant startup, zero GC, single binary)
 - **Proxy**: Cloudflare Worker (JS/TS)
 - **Search**: DuckDuckGo (free, no API key) or Google via SerpAPI
 - **Wire format**: JSON (structured elements the client renders as widgets)
