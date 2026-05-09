@@ -81,19 +81,19 @@ fn ui(f: &mut Frame, app: &App) {
 
 fn render_home(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::vertical([
-        Constraint::Percentage(35), Constraint::Length(5),
+        Constraint::Percentage(25), Constraint::Length(7),
         Constraint::Length(3), Constraint::Length(3), Constraint::Min(0),
     ]).split(area);
 
+    let teal = Style::default().fg(Color::Rgb(0, 170, 170)).bold();
+    let pink = Style::default().fg(Color::Rgb(255, 85, 255)).bold();
+    let white = Style::default().fg(Color::Rgb(255, 255, 255)).bold();
     let logo = Paragraph::new(vec![
-        Line::from(Span::styled("_____________ __       ", Style::default().fg(Color::Cyan).bold())),
-        Line::from(Span::styled("______(_)_  // /__   __", Style::default().fg(Color::Cyan).bold())),
-        Line::from(Span::styled("_____  /_  // /__ | / /", Style::default().fg(Color::LightCyan))),
-        Line::from(Span::styled("____  / /__  __/_ |/ / ", Style::default().fg(Color::LightCyan))),
-        Line::from(Span::styled("___  /    /_/  _____/  ", Style::default().fg(Color::White).bold())),
-        Line::from(Span::styled("/___/                  ", Style::default().fg(Color::White).bold())),
-        Line::from(""),
-        Line::from(Span::styled("» just for vibes «", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("    __              __       __ __        _  __             ", pink)),
+        Line::from(Span::styled("   / /_ __ _______/ /_     / // /  _  __(_)/ /  ___  _____ ", pink)),
+        Line::from(Span::styled("  / / / / / ___/ __/     / // /_ | |/ / / __ \\/ _ \\/ ___/ ", white)),
+        Line::from(Span::styled(" / / /_/ (__  ) /_       /__  __/ |   / / /_/ /  __(__  )  ", white)),
+        Line::from(Span::styled("/_/\\__,_/____/\\__/         /_/  |_/\\_/_/_.___/\\___/____/   ", teal)),
     ]).alignment(Alignment::Center);
     f.render_widget(logo, chunks[1]);
 
