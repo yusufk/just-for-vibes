@@ -86,11 +86,11 @@ fn render_home(f: &mut Frame, app: &App, area: Rect) {
     ]).split(area);
 
     let logo = Paragraph::new(vec![
-        Line::from(Span::styled("   ╦ ╦  ╦ ╦", Style::default().fg(Color::Cyan).bold())),
-        Line::from(Span::styled("   ║ ╠══╣ ╚╗", Style::default().fg(Color::Cyan).bold())),
-        Line::from(Span::styled(" ╚═╝ ╩  ╩  ╩", Style::default().fg(Color::Cyan).bold())),
+        Line::from(Span::styled(" ╻ ┏┓ ╻ ╻", Style::default().fg(Color::Cyan).bold())),
+        Line::from(Span::styled(" ┃ ┃┃ ┃╻┃", Style::default().fg(Color::Cyan).bold())),
+        Line::from(Span::styled("╺┛ ┗┛ ┗┻┛", Style::default().fg(Color::Cyan).bold())),
         Line::from(""),
-        Line::from(Span::styled("  just for vibes", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("just for vibes", Style::default().fg(Color::DarkGray))),
     ]).alignment(Alignment::Center);
     f.render_widget(logo, chunks[1]);
 
@@ -226,12 +226,23 @@ async fn search(query: &str) -> Vec<SearchResult> {
     let mut results = Vec::new();
     for chunk in body.split("class=\"result__a\"").skip(1).take(10) {
         let title = extract_between(chunk, ">", "</a>").unwrap_or_default();
-        let url = extract_between(chunk, "href=\"", "\"").unwrap_or_default();
+        let raw_url = extract_between(chunk, "href=\"", "\"").unwrap_or_default();
         let snippet = chunk.split("class=\"result__snippet\"")
             .nth(1).and_then(|s| extract_between(s, ">", "</")).unwrap_or_default();
+
+        // Extract real URL from DDG redirect
+        let url = if raw_url.contains("uddg=") {
+            extract_between(raw_url, "uddg=", "&")
+                .or_else(|| raw_url.split("uddg=").nth(1))
+                .unwrap_or(raw_url)
+        } else {
+            raw_url
+        };
+        let url = url_decode(url);
+
         if !title.is_empty() {
             results.push(SearchResult {
-                title: html_decode(title), url: url.to_string(), snippet: html_decode(snippet),
+                title: html_decode(title), url, snippet: html_decode(snippet),
             });
         }
     }
@@ -320,4 +331,30 @@ fn html_decode(s: &str) -> String {
     s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
         .replace("&quot;", "\"").replace("&#x27;", "'").replace("&#39;", "'")
         .replace("&nbsp;", " ").replace("<b>", "").replace("</b>", "")
+}
+
+fn url_decode(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.bytes();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            let hi = chars.next().unwrap_or(b'0');
+            let lo = chars.next().unwrap_or(b'0');
+            let hex = [hi, lo];
+            if let Ok(s) = std::str::from_utf8(&hex) {
+                if let Ok(val) = u8::from_str_radix(s, 16) {
+                    result.push(val as char);
+                    continue;
+                }
+            }
+            result.push('%');
+            result.push(hi as char);
+            result.push(lo as char);
+        } else if b == b'+' {
+            result.push(' ');
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
 }
