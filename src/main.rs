@@ -89,11 +89,11 @@ fn render_home(f: &mut Frame, app: &App, area: Rect) {
     let pink = Style::default().fg(Color::Rgb(255, 85, 255)).bold();
     let white = Style::default().fg(Color::Rgb(255, 255, 255)).bold();
     let logo = Paragraph::new(vec![
-        Line::from(Span::styled("    __              __       __ __        _  __             ", pink)),
-        Line::from(Span::styled("   / /_ __ _______/ /_     / // /  _  __(_)/ /  ___  _____ ", pink)),
-        Line::from(Span::styled("  / / / / / ___/ __/     / // /_ | |/ / / __ \\/ _ \\/ ___/ ", white)),
-        Line::from(Span::styled(" / / /_/ (__  ) /_       /__  __/ |   / / /_/ /  __(__  )  ", white)),
-        Line::from(Span::styled("/_/\\__,_/____/\\__/         /_/  |_/\\_/_/_.___/\\___/____/   ", teal)),
+        Line::from(Span::styled(r"    __              __       __ __        _  __             ", pink)),
+        Line::from(Span::styled(r"   / /_ _______   / /_     / // /  _  __(_)/ /_ ___  _____ ", pink)),
+        Line::from(Span::styled(r"  / / / / / ___/ / __/    / // /_ | |/ / / __ \/ _ \/ ___/ ", white)),
+        Line::from(Span::styled(r" / / /_/ (__  ) / /_     /__ __/  | |/ / / /_/ /  __(__  )  ", white)),
+        Line::from(Span::styled(r"/_/\____/____/  \__/       /_/    |___/_/_.___/\___/____/   ", teal)),
     ]).alignment(Alignment::Center);
     f.render_widget(logo, chunks[1]);
 
